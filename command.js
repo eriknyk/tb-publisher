@@ -168,7 +168,7 @@ function readManifestInfo(manifestPath) {
   console.log(`Reading Manifest file from path: ${manifestPath}`);
 
   let fileContents = fs.readFileSync(manifestPath).toString();
-  console.log('fileContents', fileContents)
+  //console.log('fileContents', fileContents)
 
   const [, versionName] = versionNameRegexPattern.exec(fileContents);
   const [, versionCode] = versionCodeRegexPattern.exec(fileContents);
@@ -197,11 +197,11 @@ function updateManifest(manifestPath, versionName, versionCode) {
   filecontent = filecontent.replace(/versionName\s*=\s*"(\d+(?:\.\d+)*)"/mg, `versionName=\"${versionName}\"`);
   filecontent = filecontent.replace(/versionCode\s*=\s*"(\d+(?:\.\d)*)"/mg, `versionCode=\"${versionCode}\"`);
 
-  const r = fs.writeFileSync(manifestPath, filecontent);
-  console.log(r);
+  fs.writeFileSync(manifestPath, filecontent);
 }
 
-function commitAndPushManifest(manifestPath, buildVersion) {
+function commitAndPushManifest(manifestPath, versionName, versionCode) {
+  const buildVersion = `${versionName}-${versionCode}`
   const result = execSync(`git ci ${manifestPath} -m "Update build version to ${buildVersion}"`, { encoding: 'utf8' });
   console.log(result)
 
@@ -209,18 +209,22 @@ function commitAndPushManifest(manifestPath, buildVersion) {
   const currentDir = path.dirname(__filename)
 
   fs.chmodSync(`${currentDir}/bin/gpush.sh`, "700");
-  const result2 = execSync(`${currentDir}/bin/gpush.sh`, { encoding: 'utf8' });
+  const result2 = execSync(`bash ${currentDir}/bin/gpush.sh`, { encoding: 'utf8' });
   console.log(result2)
 }
 
 function buildBinaries(outputs) {
-  let result;
+  let cmd;
 
   if (!outputs || outputs === 2)
-    result = execSync(`./gradlew clean generateGitProperties bundleRelease assembleRelease`, { encoding: 'utf8' });
+    cmd = `./gradlew clean generateGitProperties bundleRelease assembleRelease`;
   else
-    result = execSync(`./gradlew clean generateGitProperties assembleRelease`, { encoding: 'utf8' });
+    cmd = `./gradlew clean generateGitProperties assembleRelease`;
 
+  console.log(`Execute: ${cmd}`)
+  console.log(`Building binaries...`)
+
+  const result = execSync(cmd, { encoding: 'utf8' });
   console.log(result)
 }
 
@@ -231,7 +235,7 @@ async function addReleaseComment(issueNumber, releaseTag) {
     owner: OWNER,
     repo: REPO,
     issue_number: issueNumber,
-    body: `Available to test in Build (${releaseTag})[${url}]`,
+    body: `Available to test in Build [${releaseTag}](${url})`,
   });
 }
 
@@ -241,7 +245,7 @@ export async function run(issueNumber, repoPath) {
   const manifestInfo = readManifestInfo(manifestPath)
 
   // update Manifest
-  updateManifest(manifestPath)
+  updateManifest(manifestPath, manifestInfo.versionName, versionCode)
   // commit & push Manifest changes
   commitAndPushManifest(manifestPath, manifestInfo.versionName, versionCode)
   // generate apk file

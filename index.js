@@ -1,11 +1,17 @@
-import { fileURLToPath } from 'url';
 import path from 'path'
 import { run } from './command.js';
 
+if (process.argv.length < 3) {
+  console.error("Param [issue number] is missing.")
+  process.exit(1)
+}
+
+const issueNumber = process.argv[2];
+
 (async () => {
-  // const __filename = fileURLToPath(import.meta.url);
-  // const currentDir = path.dirname(__filename)
-  // console.log('currentDir = ', currentDir)
-  const repoPath = "/Users/erik/Github/towbook-android-release";
-  await run(1123, repoPath);
+  const repoDir = path.resolve()
+  console.log('Repo Directory : ', repoDir)
+  console.log('Issue Number   : ', issueNumber);
+
+  await run(issueNumber, repoDir);
 })();
