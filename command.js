@@ -194,8 +194,8 @@ function updateManifest(manifestPath, versionName, versionCode) {
   let filecontent = fs.readFileSync(manifestPath).toString();
   fs.chmodSync(manifestPath, "600");
 
-  filecontent = filecontent.replace(/versionCode\s*=\s*"(\d+(?:\.\d)*)"/mg, `versionCode=\"${versionCode}\"`);
   filecontent = filecontent.replace(/versionName\s*=\s*"(\d+(?:\.\d+)*)"/mg, `versionName=\"${versionName}\"`);
+  filecontent = filecontent.replace(/versionCode\s*=\s*"(\d+(?:\.\d)*)"/mg, `versionCode=\"${versionCode}\"`);
 
   const r = fs.writeFileSync(manifestPath, filecontent);
   console.log(r);
@@ -207,6 +207,8 @@ function commitAndPushManifest(manifestPath, buildVersion) {
 
   const __filename = fileURLToPath(import.meta.url);
   const currentDir = path.dirname(__filename)
+
+  fs.chmodSync(`${currentDir}/bin/gpush.sh`, "700");
   const result2 = execSync(`${currentDir}/bin/gpush.sh`, { encoding: 'utf8' });
   console.log(result2)
 }
