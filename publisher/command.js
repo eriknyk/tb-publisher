@@ -1,8 +1,10 @@
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
-import { Octokit } from "@octokit/rest";
+import { spawn } from 'node:child_process';
 import { execSync } from 'child_process';
+import { fileURLToPath } from 'url';
+
+import { Octokit } from '@octokit/rest';
 
 const OWNER = 'towbook';
 const REPO = 'towbook-android';
@@ -17,7 +19,7 @@ async function composeReleaseBody(issueNumber, pullNumber) {
   let body = `## Issue
 [#${issueNumber}](https://github.com/${OWNER}/${REPO}/issues/${issueNumber}) ${issue.title}
 
-## Changes  
+## Changes
 ${commitsText}
 `
 
@@ -58,11 +60,8 @@ async function getPullRequestCommits(pullNumber) {
     }));
 }
 
-async function createRelease(versionName, buildNumber, prerelease, issueNumber) {
+async function createRelease(versionName, buildNumber, prerelease, issueNumber, pullNumber) {
   const octokit = getClient();
-
-  const pullRequest = await getIssuePullRequest(issueNumber);
-  const pullNumber = pullRequest.number;
 
   const tag = `${versionName}-${buildNumber}`;
   const body = await composeReleaseBody(issueNumber, pullNumber);
@@ -88,7 +87,6 @@ async function uploadReleaseAsset(releaseId, filePath, fileName) {
   const fileContent = fs.readFileSync(filePath);
   const fileStats = fs.statSync(filePath);
 
-  console.log('Uploading asset: ' + fileName + "...")
   const response = await octokit.rest.repos.uploadReleaseAsset({
     owner: OWNER,
     repo: REPO,
@@ -100,8 +98,6 @@ async function uploadReleaseAsset(releaseId, filePath, fileName) {
       'content-length': fileStats.size,
     }
   });
-
-  console.log('\nUploading done!')
 
   return response.data.browser_download_url;
 };
@@ -139,7 +135,10 @@ async function readAndUpdateVersionCode(name) {
   const res = await octokit.rest.actions.getRepoVariable({
     owner: OWNER,
     repo: REPO,
-    name
+    name: name,
+    headers: {
+      'X-GitHub-Api-Version': '2022-11-28'
+    }
   });
 
   if (res.status !== 200) {
@@ -208,24 +207,32 @@ function commitAndPushManifest(manifestPath, versionName, versionCode) {
   const __filename = fileURLToPath(import.meta.url);
   const currentDir = path.dirname(__filename)
 
-  fs.chmodSync(`${currentDir}/bin/gpush.sh`, "700");
-  const result2 = execSync(`bash ${currentDir}/bin/gpush.sh`, { encoding: 'utf8' });
+  fs.chmodSync(`${currentDir}/scripts/gpush.sh`, "700");
+  const result2 = execSync(`bash ${currentDir}/scripts/gpush.sh`, { encoding: 'utf8' });
   console.log(result2)
 }
 
-function buildBinaries(outputs) {
-  let cmd;
-
-  if (!outputs || outputs === 2)
-    cmd = `./gradlew clean generateGitProperties bundleRelease assembleRelease`;
-  else
-    cmd = `./gradlew clean generateGitProperties assembleRelease`;
+function buildBinaries(callback) {
+  let cmd = `./gradlew clean generateGitProperties assembleRelease`;
 
   console.log(`Execute: ${cmd}`)
   console.log(`Building binaries...`)
 
-  const result = execSync(cmd, { encoding: 'utf8' });
-  console.log(result)
+  const buildProc = spawn('./gradlew', ['clean', 'generateGitProperties', 'assembleRelease']);
+  buildProc.stdout.on('data', (data) => {
+    console.log(`stdout: ${data}`);
+  });
+
+  buildProc.stderr.on('data', (data) => {
+    console.error(`stderr: ${data}`);
+  });
+
+  buildProc.on('close', (code) => {
+    console.log(`Build process exited with code ${code}`);
+
+    callback()
+      .then(x => console.log('Finished!'))
+  });
 }
 
 async function addReleaseComment(issueNumber, releaseTag) {
@@ -237,6 +244,8 @@ async function addReleaseComment(issueNumber, releaseTag) {
     issue_number: issueNumber,
     body: `Available to test in Build [${releaseTag}](${url})`,
   });
+
+  return res.data;
 }
 
 export async function run(issueNumber, repoPath) {
@@ -246,23 +255,39 @@ export async function run(issueNumber, repoPath) {
 
   // update Manifest
   updateManifest(manifestPath, manifestInfo.versionName, versionCode)
+
   // commit & push Manifest changes
   commitAndPushManifest(manifestPath, manifestInfo.versionName, versionCode)
+
   // generate apk file
-  buildBinaries()
+  buildBinaries(async () => {
+    const pullRequest = await getIssuePullRequest(issueNumber);
+    const pullNumber = pullRequest.number;
 
-  const res = await createRelease(manifestInfo.versionName, versionCode, true, issueNumber);
-  const release = await getRelease(res.id);
-  console.log('release => ', release)
+    const res = await createRelease(manifestInfo.versionName, versionCode, true, issueNumber, pullNumber);
+    const release = await getRelease(res.id);
 
-  const releaseTag = `${manifestInfo.versionName}-${versionCode}`;
-  const fileName = `towbook-${releaseTag}.apk`;
-  const filePath = `${repoPath}/app/build/outputs/apk/release/${fileName}`;
-  const asset = await uploadReleaseAsset(release.id, filePath, fileName);
+    console.log(`* Target Issue: #${issueNumber}`);
+    console.log(`* Target PR : #${pullNumber}`);
+    console.log("* Release " + release.tag_name + " created!");
+    console.log("* Url: " + release.html_url);
 
-  //add issue comment with release link
-  addReleaseComment(issueNumber, releaseTag);
+    const releaseTag = `${manifestInfo.versionName}-${versionCode}`;
+    const fileName = `towbook-${releaseTag}.apk`;
+    const filePath = `${repoPath}/app/build/outputs/apk/release/${fileName}`;
 
-  console.log('DONE!')
-  console.log(asset)
+    console.log(`Uploading asset ${fileName} to release ${release.tag_name}...`);
+    const asset = await uploadReleaseAsset(release.id, filePath, fileName);
+
+    console.log(`* Upload state: ${asset.state}`)
+    if (asset.state === 'uploaded') {
+      console.log(`* Asset url: ${asset.browser_download_url}`)
+    }
+
+    //add issue comment with release link
+    addReleaseComment(issueNumber, releaseTag);
+    console.log(`Comment added into issue #${issueNumber} linking the current release ${release.tag_name} build.`)
+
+    console.lod('Build finished!')
+  })
 }
