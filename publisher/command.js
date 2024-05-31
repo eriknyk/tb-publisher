@@ -99,7 +99,7 @@ async function uploadReleaseAsset(releaseId, filePath, fileName) {
     }
   });
 
-  return response.data.browser_download_url;
+  return response.data;
 };
 
 async function getRelease(releaseId) {
@@ -230,8 +230,9 @@ function buildBinaries(callback) {
   buildProc.on('close', (code) => {
     console.log(`Build process exited with code ${code}`);
 
-    callback()
-      .then(x => console.log('Finished!'))
+    if (parseInt(code) === 0) {
+      callback().then(x => console.log('Finished!'))
+    }
   });
 }
 
@@ -285,9 +286,10 @@ export async function run(issueNumber, repoPath) {
     }
 
     //add issue comment with release link
-    addReleaseComment(issueNumber, releaseTag);
+    const comment = await addReleaseComment(issueNumber, releaseTag);
     console.log(`Comment added into issue #${issueNumber} linking the current release ${release.tag_name} build.`)
+    console.log(`Comment link: ${comment.html_url}`)
 
-    console.lod('Build finished!')
+    console.log('Build finished!')
   })
 }
