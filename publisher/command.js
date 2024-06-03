@@ -118,11 +118,12 @@ async function getIssuePullRequest(issueNumber) {
   const res = await octokit.pulls.list({
     owner: OWNER,
     repo: REPO,
-    state: 'all', // 'all' to include open, closed, and merged pull requests
+    state: 'open', // 'all' to include open, closed, and merged pull requests
     per_page: 50 // Adjust as needed for the number of PRs
   });
+  const { data } = res
+  const pullRequests = data.filter(x => x.body && x.body.includes(`#${issueNumber}`));
 
-  const pullRequests = res.data.filter(x => x.body.includes(`#${issueNumber}`));
   if (pullRequests.size === 0) {
     throw new Error(`Cannot find linked Pull Request for issue #${issueNumber}`);
   }
@@ -254,6 +255,8 @@ export async function run(issueNumber, repoPath) {
   const versionCode = await readAndUpdateVersionCode("VERSION_CODE");
   const manifestInfo = readManifestInfo(manifestPath)
 
+  const pullRequest = await getIssuePullRequest(issueNumber);
+
   // update Manifest
   updateManifest(manifestPath, manifestInfo.versionName, versionCode)
 
@@ -263,6 +266,7 @@ export async function run(issueNumber, repoPath) {
   // generate apk file
   buildBinaries(async () => {
     const pullRequest = await getIssuePullRequest(issueNumber);
+
     const pullNumber = pullRequest.number;
 
     const res = await createRelease(manifestInfo.versionName, versionCode, true, issueNumber, pullNumber);

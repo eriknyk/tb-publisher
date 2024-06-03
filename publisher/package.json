@@ -7,7 +7,7 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "format": "prettier --write \"{.,src,test}/**/*.{js,ts}\""
   },
-  "author": "",
+  "author": "Erik Amaru Ortiz",
   "license": "ISC",
   "description": "",
   "dependencies": {

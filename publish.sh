@@ -1,9 +1,15 @@
 #!/bin/bash
-if [ ! -d "publisher/node_modules" ]; then
+repoDir=`pwd`
+scriptDir=`dirname "$0"`
+
+echo "* Scripts Dir: $scriptDir"
+echo "*    Repo Dir: $repoDir"
+
+if [ ! -d "$scriptDir/tb-publisher/publisher/node_modules" ]; then
   echo "executing: npm install"
-  cd publisher/
+  cd $scriptDir/tb-publisher/publisher
   npm install
-  cd ../
+  cd $repoDir
 fi
 
-node publisher/index.js $1
+node $scriptDir/tb-publisher/publisher/index.js $1
