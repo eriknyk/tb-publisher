@@ -60,7 +60,7 @@ async function getPullRequestCommits(pullNumber) {
     }));
 }
 
-async function createRelease(versionName, buildNumber, prerelease, issueNumber, pullNumber) {
+async function createGithubPreRelease(versionName, buildNumber, prerelease, issueNumber, pullNumber) {
   const octokit = getClient();
 
   const tag = `${versionName}-${buildNumber}`;
@@ -76,6 +76,28 @@ async function createRelease(versionName, buildNumber, prerelease, issueNumber, 
     body: body,
     draft: false,
     prerelease: prerelease,
+    generate_release_notes: false
+  })
+
+  return res.data;
+}
+
+async function createGithubRelease(versionName, buildNumber, pullRequest) {
+  const octokit = getClient();
+
+  const tag = `${versionName}-${buildNumber}`;
+  const body = pullRequest.body;
+  const releaseName = `Release ${tag}`
+
+  const res = await octokit.rest.repos.createRelease({
+    owner: OWNER,
+    repo: REPO,
+    tag_name: tag,
+    target_commitish: 'release',
+    name: releaseName,
+    body: body,
+    draft: false,
+    prerelease: false,
     generate_release_notes: false
   })
 
@@ -126,6 +148,24 @@ async function getIssuePullRequest(issueNumber) {
 
   if (pullRequests.size === 0) {
     throw new Error(`Cannot find linked Pull Request for issue #${issueNumber}`);
+  }
+
+  return pullRequests[0]
+}
+
+async function getReleasePullRequest(versionName) {
+  const octokit = getClient();
+  const res = await octokit.pulls.list({
+    owner: OWNER,
+    repo: REPO,
+    state: 'open', // 'all' to include open, closed, and merged pull requests
+    per_page: 50 // Adjust as needed for the number of PRs
+  });
+  const { data } = res
+  const pullRequests = data.filter(x => x.body && x.body.startsWith(`Release ${versionName}`));
+
+  if (pullRequests.size === 0) {
+    throw new Error(`Cannot find linked Pull Request for release #${versionName}`);
   }
 
   return pullRequests[0]
@@ -213,13 +253,19 @@ function commitAndPushManifest(manifestPath, versionName, versionCode) {
   console.log(result2)
 }
 
-function buildBinaries(callback) {
+function buildBinaries(type = undefined, callback) {
   let cmd = `./gradlew clean generateGitProperties assembleRelease`;
+
+  if (type === 'release') {
+    cmd += " bundleRelease";
+  }
 
   console.log(`Execute: ${cmd}`)
   console.log(`Building binaries...`)
 
-  const buildProc = spawn('./gradlew', ['clean', 'generateGitProperties', 'assembleRelease']);
+  const [gradleCmd, ...args] = cmd.split(' ');
+  const buildProc = spawn(gradleCmd, args);
+  
   buildProc.stdout.on('data', (data) => {
     console.log(`stdout: ${data}`);
   });
@@ -250,12 +296,26 @@ async function addReleaseComment(issueNumber, releaseTag) {
   return res.data;
 }
 
+function increaseVersion(versionName, x, y, z) {
+  if (!versionName) 
+    return versionName;
+
+  const parts = versionName.split('.');
+  
+  if (parts.length !== 3) 
+    return versionName;
+
+  const x1 = parseInt(parts[0]) + x;
+  const y1 = parseInt(parts[1]) + y;
+  const z1 = parseInt(parts[2]) + z;
+
+  return `${x1}.${y1}.${z1}`;
+}
+
 export async function run(issueNumber, repoPath) {
   const manifestPath = `${repoPath}/app/src/main/AndroidManifest.xml`
   const versionCode = await readAndUpdateVersionCode("VERSION_CODE");
   const manifestInfo = readManifestInfo(manifestPath)
-
-  const pullRequest = await getIssuePullRequest(issueNumber);
 
   // update Manifest
   updateManifest(manifestPath, manifestInfo.versionName, versionCode)
@@ -264,12 +324,11 @@ export async function run(issueNumber, repoPath) {
   commitAndPushManifest(manifestPath, manifestInfo.versionName, versionCode)
 
   // generate apk file
-  buildBinaries(async () => {
+  buildBinaries('prerelease', async () => {
     const pullRequest = await getIssuePullRequest(issueNumber);
-
     const pullNumber = pullRequest.number;
 
-    const res = await createRelease(manifestInfo.versionName, versionCode, true, issueNumber, pullNumber);
+    const res = await createGithubPreRelease(manifestInfo.versionName, versionCode, true, issueNumber, pullNumber);
     const release = await getRelease(res.id);
 
     console.log(`* Target Issue: #${issueNumber}`);
@@ -293,6 +352,54 @@ export async function run(issueNumber, repoPath) {
     const comment = await addReleaseComment(issueNumber, releaseTag);
     console.log(`Comment added into issue #${issueNumber} linking the current release ${release.tag_name} build.`)
     console.log(`Comment link: ${comment.html_url}`)
+
+    console.log('Build finished!')
+  })
+}
+
+export async function buildRelease(versionName, repoPath) {
+  const manifestPath = `${repoPath}/app/src/main/AndroidManifest.xml`
+  const versionCode = await readAndUpdateVersionCode("VERSION_CODE");
+
+  // update Manifest
+  updateManifest(manifestPath, versionName, versionCode)
+
+  // commit & push Manifest changes
+  commitAndPushManifest(manifestPath, versionName, versionCode)
+
+  buildBinaries('release', async () => {
+    const pullRequest = await getReleasePullRequest(versionName);
+    
+    const res = await createGithubRelease(versionName, versionCode, pullRequest);
+    console.log(`* Created github release: ${res.id} / ${res.tag_name}`)
+    
+    const release = await getRelease(res.id);
+
+    const releaseTag = `${versionName}-${versionCode}`;
+
+    // upload 1
+    const fileName = `towbook-${releaseTag}.apk`;
+    const filePath = `${repoPath}/app/build/outputs/apk/release/${fileName}`;
+
+    console.log(`Uploading asset ${fileName} to release ${release.tag_name}...`);
+    const asset = await uploadReleaseAsset(release.id, filePath, fileName);
+
+    console.log(`* Upload state: ${asset.state}`)
+    if (asset.state === 'uploaded') {
+      console.log(`* Asset url: ${asset.browser_download_url}`)
+    }
+
+    // upload 2
+    const fileName2 = `towbook-${releaseTag}.aab`;
+    const filePath2 = `${repoPath}/app/build/outputs/bundle/release/app-release.aab`;
+
+    console.log(`Uploading asset ${fileName2} to release ${release.tag_name}...`);
+    const asset2 = await uploadReleaseAsset(release.id, filePath2, fileName2);
+
+    console.log(`* Upload state: ${asset2.state}`)
+    if (asset2.state === 'uploaded') {
+      console.log(`* Asset url: ${asset2.browser_download_url}`)
+    }
 
     console.log('Build finished!')
   })
