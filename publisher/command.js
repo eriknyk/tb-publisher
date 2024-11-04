@@ -158,6 +158,10 @@ async function uploadReleaseAssetApi({owner, repo, release_id, file_path, asset_
     console.log(`\nAsset ${asset_name} uploaded successfully!`);
     const responseBody = await response.json();
     console.log(responseBody); // contains details of the uploaded asset
+
+    return {
+      data: responseBody
+    }
   } else {
     console.error('\nFailed to upload asset:', response.status, response.statusText);
     const errorText = await response.text();
