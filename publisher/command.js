@@ -3,6 +3,7 @@ import path from 'path';
 import { spawn } from 'node:child_process';
 import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
+import fetch from 'node-fetch';
 
 import { Octokit } from '@octokit/rest';
 
@@ -105,24 +106,64 @@ async function createGithubRelease(versionName, buildNumber, pullRequest) {
 }
 
 async function uploadReleaseAsset(releaseId, filePath, fileName) {
-  const octokit = getClient();
-  const fileContent = fs.readFileSync(filePath);
-  const fileStats = fs.statSync(filePath);
+  //const octokit = getClient();
+  //const fileContent = fs.readFileSync(filePath);
+  //const fileStats = fs.statSync(filePath);
 
-  const response = await octokit.rest.repos.uploadReleaseAsset({
+  const response = await uploadReleaseAssetApi({
     owner: OWNER,
     repo: REPO,
     release_id: releaseId,
-    name: fileName,
-    data: fileContent,
-    headers: {
-      'content-type': 'application/octet-stream',
-      'content-length': fileStats.size,
-    }
+    file_path: filePath,
+    asset_name: fileName,
+    token: process.env.GH_TOKEN
   });
 
   return response.data;
 };
+
+async function uploadReleaseAssetApi({owner, repo, release_id, file_path, asset_name, token}) {
+  const fileStat = fs.statSync(file_path);
+  const fileSize = fileStat.size;
+  const contentType = 'application/octet-stream';
+
+  // GitHub API endpoint for uploading assets
+  const uploadUrl = `https://uploads.github.com/repos/${owner}/${repo}/releases/${release_id}/assets?name=${asset_name}`;
+
+  // Create a readable stream of the file
+  const fileStream = fs.createReadStream(file_path);
+
+  // Keep track of uploaded bytes
+  let uploadedBytes = 0;
+
+  // Listen to data events to calculate progress
+  fileStream.on('data', (chunk) => {
+    uploadedBytes += chunk.length;
+    const progress = ((uploadedBytes / fileSize) * 100).toFixed(2);
+    process.stdout.write(`Uploading ${asset_name}: ${progress}%\r`);
+  });
+
+  const response = await fetch(uploadUrl, {
+    method: 'POST',
+    headers: {
+      'Authorization': `token ${token}`,
+      'Content-Type': contentType,
+      'Content-Length': fileSize,
+    },
+    body: fileStream,
+    duplex: 'half', // required for streaming body in Node.js 18+
+  });
+
+  if (response.ok) {
+    console.log(`\nAsset ${asset_name} uploaded successfully!`);
+    const responseBody = await response.json();
+    console.log(responseBody); // contains details of the uploaded asset
+  } else {
+    console.error('\nFailed to upload asset:', response.status, response.statusText);
+    const errorText = await response.text();
+    console.error('Error details:', errorText);
+  }
+}
 
 async function getRelease(releaseId) {
   const octokit = getClient();
