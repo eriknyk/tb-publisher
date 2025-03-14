@@ -422,6 +422,9 @@ export async function buildRelease(versionName, repoPath) {
 
     const releaseTag = `${versionName}-${versionCode}`;
 
+    console.log("* Release " + release.tag_name + " created!");
+    console.log("* Url: " + release.html_url);
+
     // upload 1
     const fileName = `towbook-${releaseTag}.apk`;
     const filePath = `${repoPath}/app/build/outputs/apk/release/${fileName}`;
