@@ -4,8 +4,9 @@ import { spawn } from 'node:child_process';
 import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import fetch from 'node-fetch';
-
 import { Octokit } from '@octokit/rest';
+import c from 'chalk';
+import { execCommand, logKeyValue } from './utils.js';
 
 const OWNER = 'towbook';
 const REPO = 'towbook-android';
@@ -250,8 +251,6 @@ function readManifestInfo(manifestPath) {
   const versionCodeRegexPattern = /versionCode\s*=\s*"(\d+(?:\.\d)*)"/mg;
   const versionNameRegexPattern = /versionName\s*=\s*"(\d+(?:\.\d+)*)"/mg;
 
-  console.log(`Reading Manifest file from path: ${manifestPath}`);
-
   let fileContents = fs.readFileSync(manifestPath).toString();
   //console.log('fileContents', fileContents)
 
@@ -266,8 +265,8 @@ function readManifestInfo(manifestPath) {
     throw new Error(`Cannot read versionCode value.`);
   }
 
-  console.log('versionName: ' + versionName)
-  console.log('versionCode: ' + versionCode)
+  logKeyValue('Version Name', versionName)
+  logKeyValue('Version Code', versionCode)
 
   return {
     versionName,
@@ -451,4 +450,32 @@ export async function buildRelease(versionName, repoPath) {
 
     console.log('Build finished!')
   })
+}
+
+///////////////////// new
+
+export async function runUpdateAppVersion(repoDir, issueNumber) {
+  const manifestPath = `${repoDir}/app/src/main/AndroidManifest.xml`
+
+  logKeyValue('Repository Dir', repoDir);
+  logKeyValue("Manifest file", manifestPath.replace(repoDir, ''));
+  logKeyValue('Issue Number', issueNumber);
+
+  const versionCode = await readAndUpdateVersionCode("VERSION_CODE");
+  const manifestInfo = readManifestInfo(manifestPath)
+  const versionName = manifestInfo.versionName
+
+  // update Manifest
+  updateManifest(manifestPath, versionName, versionCode)
+
+  // commit & push Manifest changes
+  const branchName = execCommand(`git branch --show-current`);
+  logKeyValue('Branch Name', branchName)
+  
+  const buildVersion = `${versionName}-${versionCode}`
+  execCommand(`git ci ${manifestPath} -m "Update build version to ${buildVersion}"`, true);
+  
+  console.log(c.dim(`[git] Pushing branch: ${branchName}  to  remotes: [master|upstream]`))
+  execCommand(`git push origin ${branchName}`, true)
+  execCommand(`git push upstream ${branchName}`, true)
 }
